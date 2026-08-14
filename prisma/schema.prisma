@@ -1,0 +1,365 @@
+// ---------------------------------------------------------------------------
+// KreateUp DesignSeries Portal — data model
+//
+// Provider notes:
+//   • SQLite is used for local development so the project runs with zero setup.
+//   • To deploy on Vercel/Neon/Supabase, change `provider` to "postgresql" and
+//     set DATABASE_URL accordingly. No other change is required — the schema
+//     deliberately avoids SQLite-only or Postgres-only features (enums are
+//     modelled as strings validated in `src/lib/constants.ts`).
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String  @id @default(cuid())
+  name         String
+  rollNo       String  @unique
+  email        String  @unique
+  department   String  @default("")
+  year         String  @default("")
+  mobile       String  @default("")
+  domain       String  @default("Data not Feeded")
+  mentorName   String  @default("")
+  linkedin     String  @default("")
+  github       String  @default("")
+
+  // "STUDENT" | "MENTOR" | "ADMIN" | "SUPER_ADMIN" — see ROLES in constants.ts
+  role         String  @default("STUDENT")
+  // "ACTIVE" | "SUSPENDED"
+  systemStatus String  @default("ACTIVE")
+
+  passwordHash       String
+  mustChangePassword Boolean @default(true)
+  lastLoginAt        DateTime?
+
+  // Granular module permissions, mirroring the source spreadsheet columns.
+  permUserManagement   Boolean @default(false)
+  permScanStudentQr    Boolean @default(false)
+  permMentorTasks      Boolean @default(false)
+  permLinkedinTracker  Boolean @default(false)
+  permWorklogs         Boolean @default(false)
+  permNotifications    Boolean @default(false)
+  permAttendanceLogs   Boolean @default(false)
+  permExtensionRequest Boolean @default(false)
+  permAdminDatabase    Boolean @default(false)
+  permActivityApproval Boolean @default(false)
+
+  rewardPoints Int    @default(0)
+  avatarSeed   Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attendance        Attendance[]
+  worklogs          Worklog[]
+  notes             Note[]
+  passes            ActivityPass[]   @relation("PassOwner")
+  reviewedPasses    ActivityPass[]   @relation("PassReviewer")
+  tasksAssigned     Task[]           @relation("TaskAssignee")
+  tasksCreated      Task[]           @relation("TaskAuthor")
+  notifications     Notification[]   @relation("NotificationAuthor")
+  notificationReads NotificationRead[]
+  linkedinPosts     LinkedinPost[]
+  rewardEntries     RewardEntry[]
+  auditLogs         AuditLog[]
+  extensions        ExtensionRequest[] @relation("ExtensionOwner")
+  reviewedExtensions ExtensionRequest[] @relation("ExtensionReviewer")
+
+  @@index([role])
+  @@index([year])
+  @@index([domain])
+  @@index([mentorName])
+}
+
+// ---------------------------------------------------------------------------
+// Attendance — one row per (student, day, hour slot)
+// ---------------------------------------------------------------------------
+
+model Attendance {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Stored as YYYY-MM-DD so day comparisons never depend on timezone.
+  date   String
+  hour   Int
+  reason String @default("")
+  // "PRESENT" | "LATE" | "EXCUSED" | "ABSENT"
+  status String @default("PRESENT")
+  // "SELF" | "ADMIN" | "QR"
+  source String @default("SELF")
+
+  markedBy  String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, date, hour])
+  @@index([date])
+  @@index([userId, date])
+}
+
+// ---------------------------------------------------------------------------
+// Worklog — one row per (student, day), five slots
+// ---------------------------------------------------------------------------
+
+model Worklog {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date String
+
+  s1 String @default("")
+  s2 String @default("")
+  s3 String @default("")
+  s4 String @default("")
+  s5 String @default("")
+
+  taskId String?
+  task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  // "SUBMITTED" | "REVIEWED" | "FLAGGED"
+  status       String  @default("SUBMITTED")
+  mentorRemark String  @default("")
+  reviewedBy   String?
+  reviewedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, date])
+  @@index([date])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Tasks
+// ---------------------------------------------------------------------------
+
+model Task {
+  id          String @id @default(cuid())
+  title       String
+  description String @default("")
+
+  authorId String
+  author   User   @relation("TaskAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  assigneeId String?
+  assignee   User?   @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  // When assigneeId is null the task is broadcast to a whole domain/year.
+  domain String @default("")
+  year   String @default("")
+
+  // "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
+  priority String @default("MEDIUM")
+  // "TODO" | "IN_PROGRESS" | "SUBMITTED" | "DONE" | "BLOCKED"
+  status   String @default("TODO")
+
+  dueDate     String?
+  points      Int      @default(0)
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  worklogs Worklog[]
+
+  @@index([assigneeId, status])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Activity / gate passes
+// ---------------------------------------------------------------------------
+
+model ActivityPass {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation("PassOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  date        String
+  fromTime    String
+  toTime      String
+  destination String
+  reason      String
+  // "ACTIVITY" | "MEDICAL" | "PLACEMENT" | "EVENT" | "OTHER"
+  category    String @default("ACTIVITY")
+
+  // "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED"
+  status     String  @default("PENDING")
+  passCode   String  @unique
+  remark     String  @default("")
+
+  reviewerId String?
+  reviewer   User?   @relation("PassReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([userId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Announcements
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id    String @id @default(cuid())
+  title String
+  body  String
+
+  // "GENERAL" | "URGENT" | "EVENT" | "DEADLINE" | "RESULT"
+  category String @default("GENERAL")
+  // "ALL" | "YEAR" | "DOMAIN" | "ROLE"
+  audience String @default("ALL")
+  // Value matched against the audience dimension ("" when audience = ALL).
+  audienceValue String @default("")
+
+  pinned Boolean @default(false)
+  link   String  @default("")
+
+  authorId String
+  author   User   @relation("NotificationAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  reads NotificationRead[]
+
+  @@index([createdAt])
+}
+
+model NotificationRead {
+  id             String @id @default(cuid())
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt         DateTime @default(now())
+
+  @@unique([notificationId, userId])
+}
+
+// ---------------------------------------------------------------------------
+// Private notes (per student, never shared)
+// ---------------------------------------------------------------------------
+
+model Note {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title  String @default("Untitled note")
+  body   String @default("")
+  color  String @default("blue")
+  pinned Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, updatedAt])
+}
+
+// ---------------------------------------------------------------------------
+// LinkedIn tracker
+// ---------------------------------------------------------------------------
+
+model LinkedinPost {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  url      String
+  caption  String @default("")
+  postedOn String
+  reactions Int   @default(0)
+  comments  Int   @default(0)
+  verified  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, postedOn])
+}
+
+// ---------------------------------------------------------------------------
+// Reward points ledger — the profile figure is the sum of these rows
+// ---------------------------------------------------------------------------
+
+model RewardEntry {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  points Int
+  reason String
+  // "ATTENDANCE" | "WORKLOG" | "TASK" | "LINKEDIN" | "MANUAL"
+  source String @default("MANUAL")
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Extension requests
+//
+// A worklog locks after one day. A student who genuinely could not log in time
+// asks here for that date to be reopened; an approval lets the worklog API
+// accept a late submission for exactly that one date.
+// ---------------------------------------------------------------------------
+
+model ExtensionRequest {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation("ExtensionOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The locked day the student wants reopened (YYYY-MM-DD).
+  date   String
+  reason String
+
+  /// "PENDING" | "APPROVED" | "REJECTED"
+  status String @default("PENDING")
+  remark String @default("")
+
+  reviewerId String?
+  reviewer   User?   @relation("ExtensionReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, date])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Audit trail for every privileged mutation
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id      String @id @default(cuid())
+  actorId String?
+  actor   User?  @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  action   String
+  entity   String
+  entityId String @default("")
+  meta     String @default("")
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entity])
+}

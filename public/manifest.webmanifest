@@ -1,0 +1,19 @@
+{
+  "name": "KreateUp DesignSeries Portal",
+  "short_name": "DesignSeries",
+  "description": "Attendance, worklogs, tasks, gate passes and analytics for the KreateUp DesignSeries cohort.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f4f6fb",
+  "theme_color": "#1a73e8",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
